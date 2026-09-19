@@ -4,6 +4,11 @@
 
 在把一个第三方项目装进你机器之前，先把它彻底看一遍。
 
+[![Release](https://img.shields.io/github/v/release/CamxLs/install-security-audit?label=release&color=red)](https://github.com/CamxLs/install-security-audit/releases)
+[![License](https://img.shields.io/github/license/CamxLs/install-security-audit?color=blue)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.8%2B-yellow)](#快速开始)
+[![Zero Deps](https://img.shields.io/badge/dependencies-none-brightgreen)](#脚本)
+
 ---
 
 ## 这是什么
@@ -153,3 +158,11 @@ python scripts/audit_ledger.py add \
 ## 许可
 
 [Apache License 2.0](LICENSE)
+
+---
+
+## 版本
+
+当前版本 **v2.2.0**（首个公开发布版本）。
+
+变更记录见 [Releases](https://github.com/CamxLs/install-security-audit/releases)。
