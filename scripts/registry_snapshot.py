@@ -1,36 +1,41 @@
 #!/usr/bin/env python3
 """
-install-security-audit 配套：注册表与持久化基线对比工具 (v2.1.1)
+install-security-audit companion: registry & persistence baseline diff tool (v2.2)
 
-用途：安装前拍「持久化基线」，安装后重新拍，对比出任何新增/修改的
-     自启动项、计划任务、启动文件夹、服务 —— 即「后门持久化」的藏身处。
+Purpose: capture a "persistence baseline" before install, re-capture after install,
+         and diff out any added/modified autorun entries, scheduled tasks, startup
+         folder items, or services -- the hiding places of persistence backdoors.
 
-为什么需要它：
-   文件系统快照（fs_snapshot.py）只看得到「文件」，
-   但攻击者常把持久化写进【注册表 Run 键 / 计划任务 / 服务】——
-   这些不产生新文件，文件快照完全看不见。
+Why it is needed:
+    A filesystem snapshot (fs_snapshot.py) only sees "files",
+    but attackers commonly write persistence into [registry Run keys / scheduled
+    tasks / services] -- none of which create a new file, so a file snapshot
+    cannot see them at all.
 
-用法：
-    1) 安装前：python registry_snapshot.py snapshot_before.json
-    2) 执行安装
-    3) 安装后：python registry_snapshot.py snapshot_after.json
-    4) 对比  ：python registry_snapshot.py --diff snapshot_before.json snapshot_after.json
-    5) 只看第三方：加 --exclude-system（diff 时过滤系统内建计划任务）
+Usage:
+    1) Before install: python registry_snapshot.py before.json
+    2) Run the install
+    3) After install : python registry_snapshot.py after.json
+    4) Diff          : python registry_snapshot.py --diff before.json after.json
+    5) Third-party only: add --exclude-system (filters built-in tasks during diff)
 
-覆盖范围与能力（本机 2026-09-20 实测）：
-    ✅ 注册表自启动键  —— 用 Python 标准库 winreg 直接读取（不依赖 reg.exe）
-    ✅ 启动文件夹      —— 直接读目录
-    ✅ 自启动服务      —— 读 HKLM\\SYSTEM\\CurrentControlSet\\Services 注册表
-    ✅ 计划任务        —— 提权后递归遍历 TaskCache\\Tree，采集任务名 + 动作；
-                          普通权限下【无法读取】，本工具会如实标注为未覆盖。
-                          建议：以管理员身份运行本脚本可获得该层覆盖。
+Coverage (verified on Windows):
+    [x] Registry autorun keys  -- read via Python's standard `winreg` (no reg.exe)
+    [x] Startup folders        -- direct directory read
+    [x] Auto-start services    -- read HKLM\\SYSTEM\\CurrentControlSet\\Services
+    [x] Scheduled tasks        -- when elevated, recursively walks TaskCache\\Tree
+                                  and collects task name + actions; under normal
+                                  privileges it CANNOT be read and the tool will
+                                  honestly report it as not covered.
+                                  Tip: run this script as administrator for coverage.
 
-计划任务过滤：
-   系统内建任务（\\Microsoft\\Windows\\...）通常 200+ 个，会淹没第三方任务。
-   加 --exclude-system 可在对比时只看第三方/自定义任务，异常项一眼可见。
-   （基线文件始终保存完整清单，过滤只作用于对比展示。）
+Scheduled-task filtering:
+   Windows ships 200+ built-in tasks (\\Microsoft\\Windows\\...) that drown out
+   third-party ones. Add --exclude-system during diff to see only third-party /
+   custom tasks, so anomalies stand out.
+   (The baseline file always stores the complete list; filtering only affects display.)
 
-安全设计：只读，绝不写注册表、绝不改任何配置。
+Safety design: read-only. Never writes the registry, never modifies any configuration.
 """
 import sys
 import os
@@ -43,21 +48,21 @@ try:
 except ImportError:
     winreg = None
 
-# ---------- 注册表自启动键 ----------
+# ---------- Registry autorun keys ----------
 REG_AUTORUN_KEYS = [
     (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", "HKCU Run"),
     (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\RunOnce", "HKCU RunOnce"),
     (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", "HKLM Run"),
     (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\RunOnce", "HKLM RunOnce"),
-    (winreg.HKEY_LOCAL_MACHINE, r"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run", "HKLM Run (32位)"),
-    (winreg.HKEY_LOCAL_MACHINE, r"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce", "HKLM RunOnce (32位)"),
+    (winreg.HKEY_LOCAL_MACHINE, r"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run", "HKLM Run (32-bit)"),
+    (winreg.HKEY_LOCAL_MACHINE, r"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\RunOnce", "HKLM RunOnce (32-bit)"),
     (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run", "HKLM Policy Run"),
     (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer\Run", "HKCU Policy Run"),
     (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\RunServices", "HKCU RunServices"),
     (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\RunServices", "HKLM RunServices"),
 ]
 
-# 单个值（Winlogon 等关键劫持点）
+# Single values (key hijack points such as Winlogon)
 REG_SINGLE_VALUES = [
     (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows NT\CurrentVersion\Winlogon", "Userinit", "Winlogon Userinit"),
     (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows NT\CurrentVersion\Winlogon", "Shell", "Winlogon Shell"),
@@ -76,7 +81,7 @@ SERVICES_KEY = r"SYSTEM\CurrentControlSet\Services"
 
 
 def read_key_values(hive, subkey):
-    """读取一个注册表键下的所有 值(名称/数据)。返回 list，键不存在返回 []。"""
+    """Read all values (name/data) under a registry key. Returns a list; [] if absent."""
     vals = []
     try:
         k = winreg.OpenKey(hive, subkey)
@@ -97,7 +102,7 @@ def read_key_values(hive, subkey):
 
 
 def read_single_value(hive, subkey, name):
-    """读取单个值。返回 list（统一结构，便于 diff）。"""
+    """Read a single value. Returns a list (uniform structure for diffing)."""
     try:
         k = winreg.OpenKey(hive, subkey)
     except OSError:
@@ -130,7 +135,7 @@ def collect_startup_folders():
         try:
             for n in os.listdir(d):
                 if n.lower() == "desktop.ini":
-                    continue  # 系统自带，忽略
+                    continue  # shipped by Windows, ignore
                 fp = os.path.join(d, n)
                 try:
                     files.append({"name": n, "size": os.path.getsize(fp)})
@@ -144,7 +149,7 @@ def collect_startup_folders():
 
 
 def collect_services():
-    """读取所有服务，记录启动类型。Start: 0=Boot 1=System 2=Auto 3=Manual 4=Disabled"""
+    """Read all services and record their start type. Start: 0=Boot 1=System 2=Auto 3=Manual 4=Disabled"""
     services = []
     try:
         k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, SERVICES_KEY)
@@ -168,7 +173,7 @@ def collect_services():
                 except OSError:
                     img = ""
                 winreg.CloseKey(sk)
-                if start in (0, 1, 2):  # 只关心会自动启动的
+                if start in (0, 1, 2):  # only care about auto-starting ones
                     services.append({
                         "name": sname,
                         "start": start,
@@ -182,7 +187,7 @@ def collect_services():
 
 
 def _read_task_actions(task_id):
-    """从 Actions 键读取某任务的动作（要执行的程序/命令）。"""
+    """Read a task's actions (the program/command to execute) from its Actions key."""
     acts = []
     if not task_id:
         return acts
@@ -212,7 +217,7 @@ def _read_task_actions(task_id):
 
 
 def _walk_task_tree(key, path=""):
-    """递归遍历计划任务树，返回 [(任务全路径, task_id)]。"""
+    """Recursively walk the scheduled-task tree, returning [(full task path, task_id)]."""
     out = []
     try:
         n_sub, _n_val, _ = winreg.QueryInfoKey(key)
@@ -229,20 +234,20 @@ def _walk_task_tree(key, path=""):
         except OSError:
             continue
         try:
-            # 若该节点有 Id 值，说明它本身是一个任务
+            # If this node has an Id value, it is itself a task
             try:
                 tid, _t = winreg.QueryValueEx(sk, "Id")
                 out.append((full, str(tid)))
             except OSError:
                 pass
-            # 递归子目录
+            # Recurse into subfolders
             out.extend(_walk_task_tree(sk, full))
         finally:
             winreg.CloseKey(sk)
     return out
 
 
-# 判定为「系统内建任务」的路径前缀（大小写不敏感）
+# Path prefixes considered "built-in system tasks" (case-insensitive)
 SYSTEM_TASK_PREFIXES = (
     "microsoft\\windows\\",
     "microsoft\\windows",
@@ -250,19 +255,20 @@ SYSTEM_TASK_PREFIXES = (
 
 
 def is_system_task(taskname):
-    r"""判断计划任务是否属于 Windows 系统内建（\Microsoft\Windows\... 等）。
+    r"""Determine whether a scheduled task is Windows built-in (\Microsoft\Windows\... etc.).
 
-    系统任务数量庞大（通常 200+），会淹没第三方/自定义任务；
-    标记出来便于用 --exclude-system 过滤。
+    System tasks are numerous (usually 200+) and drown out third-party/custom ones;
+    flagging them makes --exclude-system filtering possible.
     """
     low = taskname.lower().lstrip("\\")
     return low.startswith(SYSTEM_TASK_PREFIXES)
 
 
 def collect_scheduled_tasks():
-    """采集计划任务。需管理员权限；普通权限返回未覆盖结构。
+    """Collect scheduled tasks. Requires administrator privileges; returns an
+    uncovered structure under normal privileges.
 
-    返回 list（成功）或 dict（未覆盖，含 _coverage=False）。
+    Returns a list (success) or a dict (not covered, with _coverage=False).
     """
     root_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree"
     try:
@@ -273,8 +279,8 @@ def collect_scheduled_tasks():
     except OSError as e:
         return {
             "_coverage": False,
-            "_reason": f"需管理员权限（WinError {getattr(e,'winerror',e)}）",
-            "_fallback": "以管理员身份重跑本脚本即可覆盖此层（见 ADMIN_RUN.md）",
+            "_reason": f"administrator privileges required (WinError {getattr(e,'winerror',e)})",
+            "_fallback": "re-run this script as administrator to cover this layer (see ADMIN_RUN.md)",
         }
     tasks = []
     try:
@@ -283,8 +289,8 @@ def collect_scheduled_tasks():
         winreg.CloseKey(root)
 
     for full, tid in pairs:
-        # 采集完整清单（不跳过任何任务——完整基线更安全），
-        # 但标记是否为系统内建任务，便于人工辨别与过滤。
+        # Collect the complete list (skip nothing -- a complete baseline is safer),
+        # but flag whether each is a built-in system task, for human review and filtering.
         entry = {
             "taskname": full,
             "id": tid,
@@ -333,38 +339,38 @@ def do_diff(bf, af, exclude_system=False):
     after = json.loads(pathlib.Path(af).read_text(encoding="utf-8"))
 
     print("=" * 72)
-    print(" 注册表与持久化 变化对比报告")
+    print(" Registry & Persistence Change Diff Report")
     print("=" * 72)
     if exclude_system:
-        print(" [过滤] 已排除系统内建计划任务（\\Microsoft\\Windows\\...）")
-    print(f"基线时间: {before.get('time')}")
-    print(f"对比时间: {after.get('time')}")
+        print(" [filter] built-in scheduled tasks excluded (\\Microsoft\\Windows\\...)")
+    print(f"Baseline time : {before.get('time')}")
+    print(f"Compare time  : {after.get('time')}")
     print()
 
     suspicious = []
     changes = 0
 
-    # 1. 注册表自启动
+    # 1. Registry autoruns
     for label in before.get("registry", {}):
         b = before["registry"][label]
         a = after.get("registry", {}).get(label, [])
         added, removed, changed = diff_list(b, a, lambda x: x.get("name", ""))
         if added or removed or changed:
             changes += len(added) + len(removed) + len(changed)
-            print(f"[注册表] {label}")
+            print(f"[registry] {label}")
             for x in added:
-                print(f"   新增: {x.get('name')} = {x.get('value')}")
-                suspicious.append(f"注册表新增自启: {label} / {x.get('name')}")
+                print(f"   added: {x.get('name')} = {x.get('value')}")
+                suspicious.append(f"registry autorun added: {label} / {x.get('name')}")
             for x in removed:
-                print(f"   移除: {x.get('name')}")
+                print(f"   removed: {x.get('name')}")
             for c in changed:
-                print(f"   修改: {c['before'].get('name')}")
-                print(f"        旧: {c['before'].get('value')}")
-                print(f"        新: {c['after'].get('value')}")
-                suspicious.append(f"注册表自启被改: {label} / {c['before'].get('name')}")
+                print(f"   modified: {c['before'].get('name')}")
+                print(f"        old: {c['before'].get('value')}")
+                print(f"        new: {c['after'].get('value')}")
+                suspicious.append(f"registry autorun modified: {label} / {c['before'].get('name')}")
             print()
 
-    # 2. 启动文件夹
+    # 2. Startup folders
     for d, b in before.get("startup_folders", {}).items():
         a = after.get("startup_folders", {}).get(d, [])
         if not isinstance(b, list) or not isinstance(a, list):
@@ -372,36 +378,36 @@ def do_diff(bf, af, exclude_system=False):
         added, removed, changed = diff_list(b, a, lambda x: x.get("name", ""))
         if added or removed or changed:
             changes += len(added) + len(removed) + len(changed)
-            print(f"[启动文件夹] {d}")
+            print(f"[startup folder] {d}")
             for x in added:
-                print(f"   新增: {x.get('name')} ({x.get('size')}B)")
-                suspicious.append(f"启动文件夹新增: {x.get('name')}")
+                print(f"   added: {x.get('name')} ({x.get('size')}B)")
+                suspicious.append(f"startup folder item added: {x.get('name')}")
             for x in removed:
-                print(f"   移除: {x.get('name')}")
+                print(f"   removed: {x.get('name')}")
             for c in changed:
-                print(f"   修改: {c['after'].get('name')}")
+                print(f"   modified: {c['after'].get('name')}")
             print()
 
-    # 3. 服务
+    # 3. Services
     b = before.get("services", [])
     a = after.get("services", [])
     if isinstance(b, list) and isinstance(a, list):
         added, removed, changed = diff_list(b, a, lambda x: x.get("name", ""))
         if added or removed or changed:
             changes += len(added) + len(removed) + len(changed)
-            print("[自启动服务]")
+            print("[auto-start services]")
             for x in added:
-                print(f"   新增: {x.get('name')}  启动类型={x.get('start')}")
-                print(f"        映像: {x.get('image')}")
-                suspicious.append(f"新增自启动服务: {x.get('name')} -> {x.get('image')}")
+                print(f"   added: {x.get('name')}  start={x.get('start')}")
+                print(f"        image: {x.get('image')}")
+                suspicious.append(f"auto-start service added: {x.get('name')} -> {x.get('image')}")
             for x in removed:
-                print(f"   移除: {x.get('name')}")
+                print(f"   removed: {x.get('name')}")
             for c in changed:
-                print(f"   修改: {c['after'].get('name')}  启动类型 {c['before'].get('start')} -> {c['after'].get('start')}")
-                suspicious.append(f"服务启动类型被改: {c['after'].get('name')}")
+                print(f"   modified: {c['after'].get('name')}  start {c['before'].get('start')} -> {c['after'].get('start')}")
+                suspicious.append(f"service start type modified: {c['after'].get('name')}")
             print()
 
-    # 4. 计划任务
+    # 4. Scheduled tasks
     st = after.get("scheduled_tasks", {})
     st_ok = isinstance(st, list)
     if st_ok:
@@ -417,55 +423,55 @@ def do_diff(bf, af, exclude_system=False):
         added, removed, changed = diff_list(b, st, lambda x: x.get("taskname", ""))
         if added or removed or changed:
             changes += len(added) + len(removed) + len(changed)
-            print("[计划任务]")
+            print("[scheduled tasks]")
             for x in added:
-                print(f"   新增: {x.get('taskname')}")
+                print(f"   added: {x.get('taskname')}")
                 for act in (x.get("actions") or []):
-                    print(f"        动作: {act}")
+                    print(f"        action: {act}")
                 suspicious.append(
-                    f"新增计划任务: {x.get('taskname')} -> {' '.join(x.get('actions') or [])}"
+                    f"scheduled task added: {x.get('taskname')} -> {' '.join(x.get('actions') or [])}"
                 )
             for x in removed:
-                print(f"   移除: {x.get('taskname')}")
+                print(f"   removed: {x.get('taskname')}")
             for c in changed:
-                print(f"   修改: {c['after'].get('taskname')}")
-                print(f"        旧动作: {' '.join(c['before'].get('actions') or [])}")
-                print(f"        新动作: {' '.join(c['after'].get('actions') or [])}")
-                suspicious.append(f"计划任务被改: {c['after'].get('taskname')}")
+                print(f"   modified: {c['after'].get('taskname')}")
+                print(f"        old actions: {' '.join(c['before'].get('actions') or [])}")
+                print(f"        new actions: {' '.join(c['after'].get('actions') or [])}")
+                suspicious.append(f"scheduled task modified: {c['after'].get('taskname')}")
             print()
         else:
-            extra = f"，已过滤 {n_hidden} 个系统任务" if exclude_system and n_hidden else ""
-            print(f"[计划任务] 已覆盖（{len(st)} 个任务{extra}），无变化")
+            extra = f", {n_hidden} system task(s) filtered" if exclude_system and n_hidden else ""
+            print(f"[scheduled tasks] covered ({len(st)} task(s){extra}), no changes")
             print()
     elif isinstance(st, dict) and not st.get("_coverage", False):
-        print("[计划任务] ⚠️ 本层未覆盖")
-        print(f"   原因: {st.get('_reason')}")
-        print(f"   补救: {st.get('_fallback')}")
+        print("[scheduled tasks] [!] this layer is NOT covered")
+        print(f"   reason: {st.get('_reason')}")
+        print(f"   remedy: {st.get('_fallback')}")
         print()
 
     print("=" * 72)
     if changes == 0:
-        print("未发现任何持久化项（注册表自启/启动文件夹/服务/计划任务）变化")
+        print("No persistence item (registry autorun / startup folder / service / scheduled task) changed")
     else:
-        print(f"共发现 {changes} 处持久化变化")
+        print(f"{changes} persistence change(s) found")
         if suspicious:
             print()
-            print("需要重点核查的条目：")
+            print("Items requiring priority review:")
             for s in suspicious:
                 print(f"   !! {s}")
-    # 覆盖范围披露
+    # Coverage disclosure
     st_is_covered = isinstance(st, list)
     print()
-    print("本次对比覆盖范围：")
-    print("   [已覆盖] 注册表自启动键 / 启动文件夹 / 自启动服务")
-    print(f"   [{'已覆盖' if st_is_covered else '未覆盖'}] 计划任务"
-          f"{'' if st_is_covered else '  <- 需管理员权限，未验证（见 ADMIN_RUN.md）'}")
+    print("Coverage for this comparison:")
+    print("   [covered] registry autoruns / startup folders / auto-start services")
+    print(f"   [{'covered' if st_is_covered else 'NOT covered'}] scheduled tasks"
+          f"{'' if st_is_covered else '  <- administrator privileges required, unverified (see ADMIN_RUN.md)'}")
     print("=" * 72)
 
 
 def main():
     if winreg is None:
-        print("错误：本脚本仅支持 Windows（需要 winreg 模块）")
+        print("Error: this script supports Windows only (requires the winreg module)")
         sys.exit(1)
 
     args = sys.argv[1:]
@@ -473,12 +479,12 @@ def main():
     if "--diff" in args:
         i = args.index("--diff")
         if i + 2 >= len(args):
-            print("用法: python registry_snapshot.py --diff before.json after.json [--exclude-system]")
+            print("Usage: python registry_snapshot.py --diff before.json after.json [--exclude-system]")
             sys.exit(1)
         do_diff(args[i + 1], args[i + 2], exclude_system=("--exclude-system" in args))
         return
 
-    # 过滤开关：非 diff 位置参数视为输出文件名
+    # Non-flag positional argument is treated as the output filename
     out = "registry_snapshot.json"
     for a in args:
         if not a.startswith("--"):
@@ -495,29 +501,29 @@ def main():
     n_reg = sum(len(v) if isinstance(v, list) else 0 for v in data["registry"].values())
     n_start = sum(len(v) if isinstance(v, list) else 0 for v in data["startup_folders"].values())
     n_svc = len(data["services"]) if isinstance(data["services"], list) else 0
-    print(f"持久化基线已保存: {out}")
-    print(f"  主机: {data['hostname']}   用户: {data['user']}")
-    print(f"  注册表自启动值: {n_reg} 条（{len(data['registry'])} 个键）")
-    print(f"  启动文件夹项: {n_start} 个")
-    print(f"  自启动服务: {n_svc} 个")
+    print(f"Persistence baseline saved: {out}")
+    print(f"  Host: {data['hostname']}   User: {data['user']}")
+    print(f"  Registry autorun values: {n_reg} ({len(data['registry'])} keys)")
+    print(f"  Startup folder items: {n_start}")
+    print(f"  Auto-start services: {n_svc}")
     if isinstance(st, list):
         n_sys = sum(1 for t in st if t.get("system"))
         n_custom = n_tasks - n_sys
-        print(f"  计划任务: 已覆盖（{n_tasks} 个 = 系统 {n_sys} + 第三方/自定义 {n_custom}）")
-        # --list-custom：立即列出第三方任务，便于快速审查
+        print(f"  Scheduled tasks: covered ({n_tasks} total = {n_sys} system + {n_custom} third-party/custom)")
+        # --list-custom: list third-party tasks immediately for quick review
         if "--list-custom" in args:
             custom = [t for t in st if not t.get("system")]
             print()
-            print(f"--- 第三方/自定义计划任务（{len(custom)} 个）---")
+            print(f"--- Third-party / custom scheduled tasks ({len(custom)}) ---")
             if not custom:
-                print("   （无）")
+                print("   (none)")
             for t in custom:
                 acts = " ".join(t.get("actions") or [])
                 print(f"   {t.get('taskname')}")
                 if acts:
-                    print(f"       动作: {acts}")
+                    print(f"       action: {acts}")
     else:
-        print(f"  计划任务: 未覆盖（需管理员权限，见 ADMIN_RUN.md）")
+        print(f"  Scheduled tasks: NOT covered (administrator privileges required, see ADMIN_RUN.md)")
 
 
 if __name__ == "__main__":

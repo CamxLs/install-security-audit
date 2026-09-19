@@ -1,364 +1,365 @@
 ---
 name: install-security-audit
 slug: install-security-audit
-displayName: "Install Security Audit (安装前强制安全审计)"
+displayName: "Install Security Audit (Pre-Install Security Audit)"
 version: 2.2.0
-description: "安装前强制安全审计。当任务涉及安装、更新或引入任何第三方项目时，必须先执行本技能再做安装决策——包括安装/更新 Skill、MCP Server、插件、工具，运行 npm install / pip install / cargo install / brew install 等包安装，克隆或拉取外部仓库，下载并执行脚本，或引入任何会在本机执行代码、访问网络的第三方组件。触发词：安装、装一下、update、install、npm install、pip install、克隆仓库、clone、下载并运行。流程：9 环节全方位审计 → 完整可复现报告 → 用户决策 → 才可安装 → 记审计台账。每次必须严格跑完全流程，绝不跳过，绝不隐瞒。沙箱无法试跑时必须显式上报，由用户决定是否在本地真实环境运行。"
+description: "Pre-install security audit. Before installing, updating, or introducing any third-party project, run this skill first and only then make an install decision — covering installing/updating agent skills, MCP servers, plugins, and tools; running npm install / pip install / cargo install / brew install; cloning or pulling external repositories; downloading and executing scripts; or introducing any third-party component that executes code or accesses the network on the host. Trigger words: install, add package, update, npm install, pip install, clone repo, download and run. Process: 9-stage full-spectrum audit -> complete reproducible report -> user decides -> only then install -> record in the audit ledger. Run the full process every time; never skip, never conceal. When the sandbox cannot run the target, escalate explicitly and let the user decide whether to run it on the real host."
 license: Apache-2.0
 agent_created: true
 ---
 
-# 安装前强制安全审计 v2.2
+# Pre-Install Security Audit v2.2
 
-> **强制流程（MANDATORY，不可绕过）。**
-> 任何安装行为之前，必须先完整执行本流程 → 把结果报告给用户 → 由用户决定是否安装。
-> 绝不代为决定，绝不跳过，绝不隐瞒风险。
-> **每次必须严格跑完全流程（9 环节 + 台账），不得按需挑选。**
+> **MANDATORY process. Not bypassable.**
+> Before any install action, run this process to completion → report the results to the user → let the user decide whether to install.
+> Never decide on the user's behalf, never skip, never conceal risk.
+> **Run the full process every time (9 stages + ledger). Never cherry-pick stages.**
 
-## 触发条件
+## Trigger Conditions
 
-**任何**引入第三方代码到本机的行为：
+**Any** action that introduces third-party code onto the host:
 
-- 安装 / 更新 Skill（技能）
-- 安装 / 更新 MCP Server、插件、工具
-- `npm install` / `pip install` / `cargo install` / `brew install` 等任何包安装
-- 克隆或拉取外部仓库，下载并执行脚本
-- 引入任何会**在本机执行代码**或**访问网络**的第三方项目
+- Installing / updating an agent skill
+- Installing / updating an MCP server, plugin, or tool
+- `npm install` / `pip install` / `cargo install` / `brew install`, or any other package install
+- Cloning or pulling an external repository; downloading and executing a script
+- Introducing any third-party project that **executes code** or **accesses the network** on the host
 
-## 推荐配置
+## Recommended Configuration
 
-| 项 | 建议 |
+| Item | Setting |
 |---|---|
-| 在线检测服务（VirusTotal 等） | 允许使用（用哈希查询，不上传样本） |
-| 沙箱实际运行验证 | 执行试跑 |
-| 报告详略 | 完整可复现（每条结论附命令 + 输出） |
+| Online detection services (VirusTotal, etc.) | Allowed (query by hash; do not upload samples) |
+| Sandbox execution | Yes — perform the run |
+| Report detail | Complete and reproducible (each conclusion with command + output) |
 
 ---
 
-## 九环节审计流程 + 台账（缺一不可）
+## Nine Audit Stages + Ledger (all required)
 
-### 环节 1：元信息核查
-- 发布者身份、来源仓库、许可证
-- 下载量 / 星标 / 安装量
-- 官方安全报告
-- **发布者信誉档案**：
-  - 该发布者还发布过什么？是否同一主题批量刷量？
-  - 历史版本有无被下架 / 撤回记录？
-  - 有无公开安全事故或投诉？
-- 版本时效：是否最新？是否长期未更新（可能被弃管）？
+### Stage 1: Metadata Verification
+- Publisher identity, source repository, license
+- Download counts / stars / install counts
+- Official security reports
+- **Publisher reputation profile**:
+  - What else has this publisher released? Is it bulk-published filler on the same theme?
+  - Any versions withdrawn or yanked?
+  - Any public security incidents or complaints?
+- Version recency: is it current? Long-unmaintained (possibly abandoned)?
 
-### 环节 2：静态内容审计（全量文件）
-列出**全部文件**（不遗漏），用正则批量扫描。
+### Stage 2: Static Content Audit (all files)
+List **every file** (nothing omitted) and scan with regexes in bulk.
 
-**A 类·经典攻击特征**
-- 管道执行 `curl|wget ... | bash`
-- `eval` / `exec` 执行
-- base64 解码执行
-- 命令替换 `` `...` `` / `$(...)`
-- 硬编码 IP 地址
-- 网络外传（curl -d / --data / --upload-file / POST / webhook）
-- 读取敏感环境变量（AWS/TOKEN/SECRET/PASSWORD/API_KEY/PRIVATE/CREDENTIAL）
-- 读取 SSH 密钥 / 云凭据（.ssh / id_rsa / .aws / .env）
-- 反弹 shell（nc/netcat/ncat/bash -i）
-- 编码混淆（超长 base64 / hex 串）
-- 持久化（crontab / systemd / LaunchAgents / schtasks / 注册表 Run）
-- 读取浏览器凭据 / 密钥库
+**Class A — classic attack signatures**
+- Pipe-to-shell: `curl|wget ... | bash`
+- `eval` / `exec`
+- base64 decode-and-execute
+- Command substitution: `` `...` `` / `$(...)`
+- Hardcoded IP addresses
+- Data exfiltration (curl -d / --data / --upload-file / POST / webhook)
+- Reading sensitive environment variables (AWS/TOKEN/SECRET/PASSWORD/API_KEY/PRIVATE/CREDENTIAL)
+- Reading SSH keys / cloud credentials (.ssh / id_rsa / .aws / .env)
+- Reverse shell (nc/netcat/ncat/bash -i)
+- Encoding obfuscation (long base64 / hex blobs)
+- Persistence (crontab / systemd / LaunchAgents / schtasks / registry Run)
+- Reading browser credentials / key stores
 
-**B 类·现代供应链手法**
-- **供应链投毒**：安装脚本写其他包的目录、改 `node_modules`、篡改已装包
-- **依赖混淆 / typosquat**：包名与知名包近似（如 `lodas` vs `lodash`）
-- **环境探测 / 反沙箱**：检测 VM / CI / 沙箱环境（`/proc/1/cgroup`、`hypervisor`、`SUDO_USER`）以规避分析
-- **时间炸弹**：延迟触发、特定日期激活、随机休眠后再动作
-- **凭据代理**：不直接读凭据，而是借助合法 API 套取（如伪装成正常请求）
-- **动态代码加载**：运行时从远端拉取代码执行（`import()`、`require()` 远端 URL）
-- **隐写 / 加密载荷**：密文 blob + 运行时解密
-- **混淆规避**：字符串拆分拼接绕过正则（如 `"cu"+"rl"`）
+**Class B — modern supply-chain techniques**
+- **Supply-chain poisoning**: install scripts writing into other packages' directories, mutating `node_modules`, tampering with already-installed packages
+- **Dependency confusion / typosquatting**: package names close to well-known ones (`lodas` vs `lodash`)
+- **Environment probing / anti-sandbox**: detecting VM / CI / sandbox environments (`/proc/1/cgroup`, `hypervisor`, `SUDO_USER`) to evade analysis
+- **Time bombs**: delayed triggers, date-activated behavior, random sleep before acting
+- **Credential proxying**: not reading credentials directly, but exfiltrating them via legitimate-looking API calls
+- **Dynamic code loading**: fetching and executing code from a remote URL at runtime (`import()`, `require()` of a remote URL)
+- **Steganography / encrypted payloads**: ciphertext blob + runtime decryption
+- **Obfuscation evasion**: string splitting and concatenation to defeat regex (`"cu"+"rl"`)
 
-**判定原则**：文档（.md）代码块中的示例命令无害；须区分「示例」与「真实可执行代码」。
+**Judgment rule**: example commands inside documentation (.md) code blocks are harmless. Always distinguish **"example"** from **"actually executable code"**.
 
-### 环节 3：代码逐行审阅
-对**所有会被执行的代码**逐行阅读并说明真实行为：
-- 安装脚本（postinstall / preinstall / prepare / setup.py / build.rs）
-- shell / python / js / ts 脚本
-- 可执行文件包装器（bin 下的 .js / .cmd / .ps1 shim）
-- 构建脚本
+### Stage 3: Line-by-Line Code Review
+Read and explain the true behavior of **every executed artifact**:
+- Install scripts (postinstall / preinstall / prepare / setup.py / build.rs)
+- shell / python / js / ts scripts
+- Executable wrappers (`.js` / `.cmd` / `.ps1` shims under `bin`)
+- Build scripts
 
-**每条须回答**：读什么数据？写什么文件？连什么网络？有无隐蔽行为？
+**Each must answer**: what data does it read? What files does it write? What network does it contact? Any covert behavior?
 
-### 环节 4：供应链核查（关键）
-若依赖外部包 / 二进制：
-- **依赖树全展开**（含传递依赖），不只看直接依赖
-- 查证身份：
-  - npm：`https://registry.npmjs.org/<pkg>`
-  - PyPI：`https://pypi.org/pypi/<pkg>/json`
-  - GitHub：`https://api.github.com/repos/<owner>/<repo>`
-- 核对：维护者、组织归属、仓库地址、许可证、发布时间、是否官方
-- **typosquat 检测**：包名与知名包做编辑距离对比
-- **历史安全事件**：查询该包/组织是否有 CVE 或被投毒记录
+### Stage 4: Supply-Chain Verification (critical)
+If external packages / binaries are involved:
+- **Expand the full dependency tree** (including transitive dependencies), not just direct ones
+- Verify identity:
+  - npm: `https://registry.npmjs.org/<pkg>`
+  - PyPI: `https://pypi.org/pypi/<pkg>/json`
+  - GitHub: `https://api.github.com/repos/<owner>/<repo>`
+- Cross-check: maintainer, organization, repository URL, license, publish date, whether official
+- **Typosquat detection**: edit-distance comparison against well-known package names
+- **Security history**: has this package/organization had CVEs or poisoning incidents?
 
-### 环节 5：权限与数据流向
-- 会读取哪些数据（文件 / 环境 / 浏览器 / 凭据）？
-- 会向哪里发送数据（域名 / IP / 上传）？
-- 是否需要凭据 / API Key？
-- 默认是否有限制？安全选项是否需显式开启？
-- **最小权限方案**：能否隔离安装？能否限制网络？能否只给必要目录？
+### Stage 5: Permissions and Data Flow
+- What data is read (files / environment / browser / credentials)?
+- Where is data sent (domains / IPs / uploads)?
+- Are credentials / API keys required?
+- Are there default restrictions? Do safe options need to be explicitly enabled?
+- **Least-privilege plan**: can it be installed isolated? Can network be restricted? Can it be limited to only the directories it needs?
 
-### 环节 6：行为验证（沙箱试跑 + 不可用时的上报机制）
-> 静态审阅看不见动态生成的恶意行为，必须实际观察。
-> **但沙箱不是万能的**——部分项目在沙箱中无法运行（见下方判定），此时**绝不擅自改在本机真实环境试跑**。
+### Stage 6: Behavioral Validation (sandbox run + escalation when unavailable)
+> Static review cannot see dynamically generated malicious behavior; you must observe it.
+> **But a sandbox is not omnipotent** — some projects cannot run in one (see the criteria below). In that case, **never quietly fall back to the real host.**
 
-#### 6.1 首选：隔离环境试跑
-- 在**隔离目录 / 沙箱**中执行安装 / 运行（不污染系统）
-- 监控四类行为：
-  - **文件系统**：写入/修改了哪些路径（尤其系统目录、其他包目录、启动项）
-  - **网络**：连接了哪些域名/IP（尤其非官方、可疑端口）
-  - **进程**：启动了哪些子进程、执行了什么命令
-  - **持久化**：注册表自启、计划任务、服务是否被写入（见环节 8）
+#### 6.1 Preferred: isolated-environment run
+- Execute the install / run inside an **isolated directory or sandbox** (without contaminating the system)
+- Monitor four behavior classes:
+  - **Filesystem**: which paths were written/modified (especially system dirs, other packages' dirs, startup locations)
+  - **Network**: which domains/IPs were contacted (especially unofficial ones, suspicious ports)
+  - **Processes**: which child processes were spawned, what commands were executed
+  - **Persistence**: were registry autoruns, scheduled tasks, or services created (see Stage 8)
 
-**可用的落地方法**：
+**Practical methods**:
 
-1. **文件系统快照 diff**（`scripts/fs_snapshot.py`，首选）
-   - 安装**前**记录监控范围清单 + 哈希：目标目录 + 敏感位置（`~/.ssh`、`~/.aws`、启动项、`hosts`、已装 `node_modules`）
-   - 安装**后**重新记录并对比 → 新增/修改/删除清单
-   - 对**敏感位置**的意外写入 → 立即标记高危
+1. **Filesystem snapshot diff** (`scripts/fs_snapshot.py` — preferred)
+   - **Before** install, record the scope list + hashes: target directory + sensitive locations (`~/.ssh`, `~/.aws`, startup items, `hosts`, installed `node_modules`)
+   - **After** install, record again and diff → added / modified / deleted list
+   - Any unexpected write to a **sensitive location** → flag as high risk immediately
 
-2. **持久化基线 diff**（`scripts/registry_snapshot.py`）
-   - 安装前后对比注册表自启键 / 启动文件夹 / 自启动服务 / 计划任务
-   - 详见环节 8
+2. **Persistence baseline diff** (`scripts/registry_snapshot.py`)
+   - Diff registry autoruns / startup folders / auto-start services / scheduled tasks before and after install
+   - See Stage 8
 
-3. **网络行为观察**
-   - 安装前后 `netstat -ano` 快照 diff
-   - 静态提取脚本中的域名/IP，与官方声明比对
-   - 判断是否有**非官方、可疑端口、明文外传**
+3. **Network behavior observation**
+   - Diff `netstat -ano` snapshots before and after install
+   - Statically extract domains/IPs from the scripts and compare against official claims
+   - Determine whether there is **unofficial, suspicious-port, or cleartext exfiltration**
 
-4. **进程行为观察**
-   - 用 Python `subprocess` 包裹执行，捕获子进程调用
-   - 关注：是否启动 shell、是否调用 `curl`/`wget`、是否执行下载的文件
+4. **Process behavior observation**
+   - Wrap execution with Python `subprocess` and capture child-process invocations
+   - Watch for: spawning a shell, calling `curl`/`wget`, executing a downloaded file
 
-#### 6.2 沙箱无法试跑的判定条件（须逐条核对并说明）
-遇到以下任一情况，**判定为"无法安全沙箱试跑"**：
-- 需要**真实凭据 / 账号**才能启动（登录态、API Key、OAuth）
-- 需要**特权**（管理员/root、系统服务注册、驱动加载）
-- 需要**访问真实硬件 / 设备 / 网络资源**（打印机、串口、特定内网）
-- 需要**GUI 桌面交互**，沙箱无显示环境
-- 本机**沙箱能力缺失**（如 Windows Sandbox 未启用，且无替代隔离手段）
-- 试跑本身**可能破坏系统**或造成不可逆副作用
+#### 6.2 Criteria for "cannot be safely sandboxed" (check each explicitly)
+If **any** of these applies, it is **"cannot be safely sandboxed"**:
+- Requires **real credentials / accounts** to start (login state, API key, OAuth)
+- Requires **privileges** (administrator/root, service registration, driver loading)
+- Requires **real hardware / devices / network resources** (printer, serial port, specific intranet)
+- Requires **GUI desktop interaction** and the sandbox has no display
+- The host **lacks sandbox capability** (e.g. Windows Sandbox not enabled, no alternative isolation)
+- The run itself **could damage the system** or cause irreversible side effects
 
-#### 6.3 【强制】沙箱不可用时的上报与决策权移交
-> **硬性要求，绝不允许绕过。**
+#### 6.3 [MANDATORY] Escalation and handover when the sandbox is unavailable
+> **A hard requirement. Never bypassed.**
 
-当判定"无法安全沙箱试跑"时，**必须**：
+When "cannot be safely sandboxed" is determined, you **must**:
 
-1. **停止**继续试跑的任何念头 —— **绝不擅自在本地真实环境运行**
-2. 在报告中**单列一段醒目标注**，包含：
-   - **为何无法沙箱试跑**（对应 6.2 的具体条件）
-   - **该环节未验证**带来的风险敞口（哪些恶意行为可能因此漏检）
-   - **可选方案与各自代价**，至少给出：
-     - 方案 A：**放弃动态验证**，仅凭静态 + 供应链结论决策
-     - 方案 B：**由用户决定**是否在本机真实环境试运行（需用户明确同意，并说明可能的后果与回滚方式）
-     - 方案 C：**等待/寻找替代隔离手段**（如用户可自行在虚拟机/独立机器上试跑）
-3. **把决策权交给用户**，等待用户明确指示后**才**按指示行事
+1. **Stop** any thought of running it anyway — **never run it on the real host on your own initiative**
+2. Add a **prominent standalone section** to the report, containing:
+   - **Why** the sandbox cannot run (the specific 6.2 condition)
+   - The **risk exposure** of this unverified stage (which malicious behaviors might be missed)
+   - **Options and their trade-offs**, at minimum:
+     - **Option A**: **Abandon dynamic validation** — decide from static + supply-chain findings alone
+     - **Option B**: **Let the user decide** whether to run it on the real host (requires explicit consent; state possible consequences and rollback)
+     - **Option C**: **Wait for / find an alternative isolation mechanism** (e.g. the user runs it in a VM or separate machine)
+3. **Hand the decision to the user** and act only after explicit instruction
 
-**禁止的措辞与行为**：
-- ❌ "沙箱跑不了，那我直接在本地跑一下吧"（擅自降级）
-- ❌ "为节省时间，跳过行为验证"（静默省略）
-- ❌ 用"低风险"结论**掩盖**未做动态验证的事实
-- ✅ "沙箱无法试跑，原因 X；是否要在本地真实环境试跑，请你决定"
+**Forbidden wording and behavior**:
+- ❌ "The sandbox won't run it, so I'll just run it locally" (unauthorized downgrade)
+- ❌ "To save time, skipping behavioral validation" (silent omission)
+- ❌ Using a "low risk" conclusion to **conceal** the fact that dynamic validation was not done
+- ✅ "The sandbox cannot run this, reason X; should I run it on the real host? Your call."
 
-- **若确实无法试跑**：**必须如实声明"未做行为验证"，标注为未验证风险**，并在报告中单列。
+- **If it truly cannot be run**: **state plainly that behavioral validation was not performed**, flag it as unverified risk, and call it out separately in the report.
 
-### 环节 7：二进制可信度
-对下载的编译产物（.exe / .dll / .so / 二进制）：
-- **哈希校验**：用配套脚本 `scripts/audit_scan.py` 自动算 SHA256；与官方发布的校验和对比（若有）
-- **官方来源确认**：下载 URL 是否指向官方仓库 release / 官方 CDN
-- **数字签名**：用 `certutil -verify <file>` 或 PowerShell `Get-AuthenticodeSignature` 验证签名者
-- **在线检测**：提交 VirusTotal 查询（用文件哈希查询，避免上传样本）
-- **本地扫描**：Windows Defender `MpCmdRun.exe -Scan -ScanType 3 -File <path>`
-- 无校验和 / 无签名时，**必须标注为残留供应链风险**
+### Stage 7: Binary Trustworthiness
+For downloaded compiled artifacts (.exe / .dll / .so / binaries):
+- **Hash verification**: `scripts/audit_scan.py` computes SHA256 automatically; compare against the official published checksum (if any)
+- **Official origin**: does the download URL point to the official repository release / official CDN?
+- **Digital signature**: verify the signer with `certutil -verify <file>` or PowerShell `Get-AuthenticodeSignature`
+- **Online detection**: submit the file hash to VirusTotal (query by hash to avoid uploading samples)
+- **Local scan**: Windows Defender `MpCmdRun.exe -Scan -ScanType 3 -File <path>`
+- With no checksum / no signature, **flag it as residual supply-chain risk**
 
-#### 检测手段可用性对照（Windows 实测参考）
-| 能力 | 状态 | 说明 |
+#### Detection capability reference (observed on Windows)
+| Capability | Status | Notes |
 |---|---|---|
-| SHA256 计算 | ✅ 可用 | 配套脚本自动完成 |
-| `curl` / `certutil` / `git` / `npm` / `node` | ✅ 可用 | 常规系统路径 |
-| `signtool` / `7z` / `strings` / `objdump` / `wmic` | ❌ 常见缺失 | 签名验证改用 `certutil -verify` |
-| Windows Defender `MpCmdRun.exe` | ⚠️ 视环境而定 | 受限环境下可能返回 `0x80004005`。备选：VirusTotal 在线检测 |
-| Windows Sandbox (WSB) | ❌ 默认未启用 | 沙箱试跑改用「隔离目录 + 文件系统快照 diff」方式 |
-| PowerShell `Add-Type` / COM 实例化 | ⚠️ 可能被策略拦截 | 若不可用，签名验证须走 `certutil` 外部命令 |
-| `reg.exe` / `schtasks.exe` / `sc.exe` | ⚠️ 可能被策略拦截 | 若被禁，注册表读取改用 Python `winreg` 原生模块绕过 |
-| `C:\Windows\System32\Tasks` 目录读取 | ⚠️ 拒绝访问（WinError 5） | 计划任务目录需管理员权限 |
+| SHA256 computation | ✅ Available | Handled automatically by the bundled script |
+| `curl` / `certutil` / `git` / `npm` / `node` | ✅ Available | Standard system paths |
+| `signtool` / `7z` / `strings` / `objdump` / `wmic` | ❌ Often missing | Use `certutil -verify` for signature checks |
+| Windows Defender `MpCmdRun.exe` | ⚠️ Environment-dependent | May return `0x80004005` in restricted environments. Fallback: VirusTotal |
+| Windows Sandbox (WSB) | ❌ Disabled by default | Use "isolated directory + filesystem snapshot diff" instead |
+| PowerShell `Add-Type` / COM instantiation | ⚠️ May be blocked by policy | If unavailable, use the external `certutil` command |
+| `reg.exe` / `schtasks.exe` / `sc.exe` | ⚠️ May be blocked by policy | If blocked, read the registry via Python's native `winreg` module |
+| Reading `C:\Windows\System32\Tasks` | ⚠️ Access denied (WinError 5) | The scheduled-tasks directory requires administrator privileges |
 
-> 上表为常见参照，实际以本机探测结果为准。
-> **原则**：某项检测手段不可用时，**必须如实标注"该手段不可用，未验证"**，不得臆测结论。
+> The table above is a common reference; defer to actual results on the host.
+> **Principle**: when a detection method is unavailable, **state plainly "method unavailable, unverified"** — never speculate a conclusion.
 
-### 环节 8：注册表与持久化基线对比
-> **文件快照（环节 6）只看得到「文件」，看不到「注册表 / 计划任务 / 服务」这类持久化后门。**
-> 攻击者常把自启动写进注册表 Run 键而不落地任何新文件——必须专门覆盖这一层。
+### Stage 8: Registry and Persistence Baseline Diff
+> **Filesystem snapshots (Stage 6) only see "files" — they cannot see "registry / scheduled tasks / services" persistence backdoors.**
+> Attackers often write autoruns into registry Run keys without dropping any new file — this layer must be covered explicitly.
 
-**配套工具**：`scripts/registry_snapshot.py`（安装前拍基线，安装后对比）
+**Bundled tool**: `scripts/registry_snapshot.py` (snapshot a baseline before install, diff after)
 
-> **第三方任务过滤**
-> 系统内建计划任务通常 200+ 个，会淹没第三方任务。工具支持：
-> - `--list-custom`：拍基线时**立即列出**所有第三方/自定义任务
-> - `--exclude-system`：对比时**过滤**系统任务，让异常项一眼可见
-> 基线文件始终保存完整清单，过滤只作用于展示，不影响检出完整性。
+> **Third-party task filtering**
+> Windows ships 200+ built-in scheduled tasks, which drown out third-party ones. The tool supports:
+> - `--list-custom`: **list** all third-party/custom tasks immediately at snapshot time
+> - `--exclude-system`: **filter** system tasks during diff so anomalies stand out
+> The baseline file always stores the complete list; filtering only affects display, never detection completeness.
 
-**覆盖范围**：
-| 层 | 覆盖 | 手段 |
+**Coverage**:
+| Layer | Covered | Method |
 |---|---|---|
-| 注册表自启动键（HKCU/HKLM Run、RunOnce、Wow6432Node、Policies\Explorer\Run、RunServices） | ✅ | Python `winreg` 原生读取 |
-| 关键单值劫持点（Winlogon Userinit/Shell、HKCU Windows Load/Run、AppInit_DLLs） | ✅ | 同上 |
-| 启动文件夹（用户 + 全局） | ✅ | 直接读目录 |
-| 自启动服务（Start=0/1/2） | ✅ | 读 `HKLM\SYSTEM\CurrentControlSet\Services` |
-| 计划任务 | ⚠️ **普通权限未覆盖** | TaskCache 注册表与 Tasks 目录均需管理员权限；**报告中须显式声明未覆盖**，建议管理员身份重跑（见 `ADMIN_RUN.md`） |
+| Registry autorun keys (HKCU/HKLM Run, RunOnce, Wow6432Node, Policies\Explorer\Run, RunServices) | ✅ | Python `winreg` native read |
+| Key single-value hijack points (Winlogon Userinit/Shell, HKCU Windows Load/Run, AppInit_DLLs) | ✅ | Same as above |
+| Startup folders (user + all-users) | ✅ | Direct directory read |
+| Auto-start services (Start=0/1/2) | ✅ | Read `HKLM\SYSTEM\CurrentControlSet\Services` |
+| Scheduled tasks | ⚠️ **Not covered under normal privileges** | TaskCache registry and the Tasks directory both require administrator privileges; **the report must state this explicitly**, and recommend re-running elevated (see `ADMIN_RUN.md`) |
 
-> **实现说明**：提权后递归遍历 `TaskCache\Tree`，并读取每个任务的 `Actions`（要执行的程序与参数），
-> 使「新增/修改计划任务」可被 diff 检出。比较旧版生成的基线时，因旧基线不含任务清单，
-> 计划任务层会显示「未覆盖」——这是正确行为（无数据即不假装有数据）。
+> **Implementation note**: when elevated, the tool recursively walks `TaskCache\Tree` and reads each task's `Actions`
+> (the program and arguments to execute), so "added/modified scheduled task" can be detected by the diff.
+> When comparing against a baseline generated by an older version, the scheduled-tasks layer will show
+> "not covered" because that baseline contains no task list — this is correct behavior (no data means no pretending).
 
-**判定规则**：
-- 任何**新增/修改**的注册表自启动值、启动文件夹项、自启动服务 → **立即标记高危**并列入重点核查
-- 新增服务的映像路径指向临时目录 / 用户目录 / 可疑路径 → 高危
-- **计划任务层未覆盖时，必须在报告中单列声明**，不得默认"无计划任务"
+**Judgment rules**:
+- Any **added/modified** registry autorun value, startup-folder item, or auto-start service → **flag as high risk immediately** and put it on the priority review list
+- A new service whose image path points to a temp directory / user directory / suspicious path → high risk
+- **When the scheduled-tasks layer is not covered, state it separately in the report** — never default to "no scheduled tasks"
 
-### 环节 9：风险评估与结论
-输出：
-- **风险等级**：低 / 中（P1）/ 高（P0）
-- **证据**：具体发现（可复现）
-- **残留风险**：无法消除的风险
-- **建议（四档）**：
-  - ✅ **可直接安装**（低风险）
-  - ⚠️ **有条件安装**（需用户明确确认）
-  - 🧪 **隔离安装**（装到沙箱/受限目录，不给完整权限）
-  - ❌ **不建议安装**（高危）
+### Stage 9: Risk Assessment and Conclusion
+Output:
+- **Risk level**: Low / Medium (P1) / High (P0)
+- **Evidence**: specific findings (reproducible)
+- **Residual risk**: risks that cannot be eliminated
+- **Recommendation (four tiers)**:
+  - ✅ **Install as-is** (low risk)
+  - ⚠️ **Install with conditions** (requires explicit user confirmation)
+  - 🧪 **Install isolated** (sandbox / restricted directory, without full privileges)
+  - ❌ **Do not install** (high risk)
 
 ---
 
-## 报告与决策（严格顺序）
+## Reporting and Decision (strict order)
 
-1. **先报告**：完整、如实告知用户（含证据）
-2. **后决策**：由用户决定是否安装
-3. **P0 高危** → 强烈警告 + 建议不装；用户坚持才可继续
-4. **P1 中危** → 警告 + 需用户明确确认
-5. 只有用户**明确同意**后才执行安装
-6. **记台账**（不可省略）：无论结论如何，**必须**把本次审计写入台账
+1. **Report first**: tell the user completely and honestly (with evidence)
+2. **Then decide**: the user decides whether to install
+3. **P0 high risk** → strong warning + recommend against installing; proceed only if the user insists
+4. **P1 medium risk** → warn and require explicit user confirmation
+5. Install only after the user **explicitly agrees**
+6. **Write the ledger** (not optional): regardless of the verdict, **always** record this audit in the ledger
 
-## 环节 10：审计台账（每次必做）
+## Stage 10: Audit Ledger (every time)
 
-> 单次审计是孤立的；台账让跨次规律显现：某发布者是否被反复审计、
-> 某个包是否反复出现残留风险、上次是怎么判的。
+> A single audit is isolated; the ledger makes cross-run patterns visible: whether a publisher
+> has been audited repeatedly, whether a package keeps showing residual risk, how it was judged last time.
 
-**工具**：`scripts/audit_ledger.py`
-**台账位置**：`~/.install-security-audit/ledger.jsonl`（JSONL，追加式）
+**Tool**: `scripts/audit_ledger.py`
+**Ledger location**: `~/.install-security-audit/ledger.jsonl` (JSONL, append-only)
 
-**每次审计结束时必须执行**：
+**At the end of every audit, run**:
 ```bash
 python scripts/audit_ledger.py add \
-  --name "<项目名>" --source "<来源>" --publisher "<发布者>" --version "<版本>" \
-  --level "<低/中/高>" --verdict "<install/conditional/isolated/reject/uninstalled>" \
-  --notes "<关键发现>" --risks "<残留风险>" --unverified "<未验证项>"
+  --name "<project>" --source "<source>" --publisher "<publisher>" --version "<version>" \
+  --level "<low/medium/high>" --verdict "<install/conditional/isolated/reject/uninstalled>" \
+  --notes "<key findings>" --risks "<residual risk>" --unverified "<unverified items>"
 ```
 
-**审计开始前应查询历史**：
+**Before an audit begins, query the history**:
 ```bash
-python scripts/audit_ledger.py query --publisher "<发布者>"   # 该发布者审过什么？
-python scripts/audit_ledger.py query --name "<项目名>"          # 该项目审过几次？
+python scripts/audit_ledger.py query --publisher "<publisher>"   # what has this publisher been audited for?
+python scripts/audit_ledger.py query --name "<project>"          # how many times has this project been audited?
 ```
-若查到历史记录，**必须在报告中引用**（如"该发布者此前已审计过 N 次，结论均为…"）。
+If history is found, **you must cite it in the report** (e.g. "this publisher has been audited N times before, with verdicts ...").
 
-**台账的价值**：
-- 发布者信誉档案的**事实来源**（环节 1 可用它核实）
-- 残留风险的**累积视图**（`stats` 显示含残留风险的记录数）
-- 决策的**可回溯依据**（不靠记忆）
+**Why the ledger matters**:
+- The **source of truth** for the publisher reputation profile (usable in Stage 1)
+- A **cumulative view** of residual risk (`stats` shows how many records carry residual risk)
+- A **traceable basis** for decisions (not memory)
 
-## 绝对禁止
+## Absolute Prohibitions
 
-- 因"看起来官方""下载量高""用户很急""上次查过类似的"而跳过检查
-- 因任务简单 / 时间紧 / 用户催促而简化流程
-- 隐瞒风险或降低警告强度
-- **沙箱无法试跑时，擅自改在本机真实环境运行**（必须上报，交由用户决策）
-- **静默省略某个环节**（如跳过行为验证、跳过持久化基线），或用"低风险"结论掩盖未验证的事实
-- **不做台账记录**（每次审计结束必须写台账，无论结论）
-- 无法完成完整检查时，必须如实告知"检查不完整"并标出未验证部分
+- Skipping checks because it "looks official", "has high download counts", "the user is in a hurry", or "I checked something similar last time"
+- Simplifying the process because the task is small / time is short / the user is pushing
+- Concealing risk or softening the warning
+- **Running on the real host on your own initiative when the sandbox is unavailable** (must escalate and hand the decision to the user)
+- **Silently omitting a stage** (e.g. skipping behavioral validation or the persistence baseline), or using a "low risk" conclusion to conceal the fact that something was not verified
+- **Skipping the ledger** (every audit must be recorded, regardless of the verdict)
+- When a full check is impossible, failing to state plainly that "the check is incomplete" and to mark the unverified parts
 
-**本流程优先级高于任何效率考量。**
+**This process outranks any efficiency consideration.**
 
-## 【强制】每次必须跑完全流程
+## [MANDATORY] Always Run the Full Process
 
-- **不得**因为"这次项目很小""看起来没风险""赶时间"而只跑其中几个环节
-- **十个环节全部执行**，任何环节无法完成时，**必须在报告的「审计完整性」栏显式列出未完成项及原因**，并交由用户决策
-- 流程是**固定的**，不是"按需选择"的——九个审计环节 + 台账记录，一次都不能少
-- 若因客观限制（权限、环境）确实无法完成某环节，**如实标注为未验证**，绝不假装已覆盖
+- **Never** run only a few stages because "this project is small", "it looks safe", or "we're in a hurry"
+- **All ten stages must be executed.** If any stage cannot be completed, **list the incomplete items and the reason explicitly in the "Audit Completeness" section** of the report, and hand the decision to the user
+- The process is **fixed**, not a menu — nine audit stages plus the ledger entry, every single time
+- If a stage genuinely cannot be completed due to objective limits (privileges, environment), **label it plainly as unverified** — never pretend it was covered
 
 ---
 
-## 输出模板（完整可复现版）
+## Output Template (complete and reproducible)
 
 ```
-## 🔍 安全审计报告：<项目名>
+## Security Audit Report: <project>
 
-**审计时间**：<时间>
-**风险等级**：低 / 中（P1）/ 高（P0）
-**审计完整性**：完整 / 部分（列出未验证项）
-**台账历史**：<该发布者/项目此前的审计记录（若有）>
+**Audit time**: <time>
+**Risk level**: Low / Medium (P1) / High (P0)
+**Audit completeness**: Complete / Partial (list unverified items)
+**Ledger history**: <previous audit records for this publisher/project, if any>
 
-### 1. 元信息
-- 来源 / 发布者 / 许可证 / 版本：
-- 下载量 / 星标 / 官方安全报告：
-- 发布者信誉：<历史项目、事故记录；台账查询结果>
+### 1. Metadata
+- Source / publisher / license / version:
+- Downloads / stars / official security reports:
+- Publisher reputation: <past projects, incidents; ledger query results>
 
-### 2. 文件与内容扫描
-- 文件总数与清单：
-- A 类命中：<逐条说明是示例还是真实代码>
-- B 类命中：<供应链投毒/混淆/反沙箱等>
+### 2. File and Content Scan
+- Total file count and listing:
+- Class A hits: <whether each is an example or real code>
+- Class B hits: <supply-chain poisoning / obfuscation / anti-sandbox, etc.>
 
-### 3. 代码审阅
-| 脚本 | 行为 | 读 | 写 | 网络 |
+### 3. Code Review
+| Script | Behavior | Reads | Writes | Network |
 |---|---|---|---|---|
 
-### 4. 供应链
-- 依赖树：
-- 身份核对：
-- typosquat 检测：
-- 历史安全事件：
-- 校验和：有 / 无（标注风险）
+### 4. Supply Chain
+- Dependency tree:
+- Identity cross-check:
+- Typosquat detection:
+- Security history:
+- Checksum: present / absent (flag the risk)
 
-### 5. 数据流向
-- 读取 / 发送 / 凭据 / 默认限制 / 最小权限方案：
+### 5. Data Flow
+- Reads / sends / credentials / default restrictions / least-privilege plan:
 
-### 6. 行为验证（沙箱试跑）
-- 试跑方式：
-- 文件系统变化：
-- 网络连接：
-- 进程行为：
-- 或：<未做，原因 + 标注未验证风险>
+### 6. Behavioral Validation (sandbox run)
+- Method:
+- Filesystem changes:
+- Network connections:
+- Process behavior:
+- Or: <not performed — reason + unverified risk flagged>
 
-**⚠️ 若沙箱无法试跑（6.3 强制上报段）**：
-- 无法沙箱试跑的原因：<对应 6.2 具体条件>
-- 该环节未验证的风险敞口：<可能漏检哪些恶意行为>
-- 可选方案：A 放弃动态验证（仅静态+供应链决策） / B 在本地真实环境试跑（需你确认） / C 另寻隔离手段
-- **请你决定如何处置，在你明确指示前我不会在本地真实环境运行**
+**If the sandbox cannot run (6.3 mandatory escalation)**:
+- Why the sandbox cannot run: <the specific 6.2 condition>
+- Risk exposure of this unverified stage: <which malicious behaviors might be missed>
+- Options: A abandon dynamic validation (decide from static + supply-chain only) / B run on the real host (your confirmation required) / C find alternative isolation
+- **Please decide how to proceed; I will not run it on the real host until you explicitly instruct me**
 
-### 7. 二进制可信度
-- 哈希校验 / 官方来源 / 签名 / VirusTotal / 本地扫描：
+### 7. Binary Trustworthiness
+- Hash verification / official origin / signature / VirusTotal / local scan:
 
-### 8. 注册表与持久化基线
-- 注册表自启动键变化：无 / <列出新增或修改项>
-- 启动文件夹变化：无 / <列出>
-- 自启动服务变化：无 / <列出>
-- 计划任务：已覆盖 / **未覆盖（需管理员权限，未验证）**
-- 工具：`registry_snapshot.py --diff`
+### 8. Registry and Persistence Baseline
+- Registry autorun changes: none / <list added or modified entries>
+- Startup folder changes: none / <list>
+- Auto-start service changes: none / <list>
+- Scheduled tasks: covered / **not covered (administrator privileges required — unverified)**
+- Tool: `registry_snapshot.py --diff`
 
-### 9. 残留风险与建议
-- 残留风险：
-- 建议：✅ 可安装 / ⚠️ 有条件安装 / 🧪 隔离安装 / ❌ 不建议安装
-- **请确认是否安装**
+### 9. Residual Risk and Recommendation
+- Residual risk:
+- Recommendation: ✅ Install / ⚠️ Install with conditions / 🧪 Install isolated / ❌ Do not install
+- **Please confirm whether to install**
 
-### 10. 审计台账（必做）
-- 已写入台账：是 / 否
-- 记录内容：<项目/来源/发布者/等级/结论/残留风险/未验证项>
-- 台账位置：`~/.install-security-audit/ledger.jsonl`
+### 10. Audit Ledger (required)
+- Written to ledger: yes / no
+- Record contents: <project/source/publisher/level/verdict/residual risk/unverified items>
+- Ledger location: `~/.install-security-audit/ledger.jsonl`
 
-### 证据附录（可复现）
-<列出关键命令与输出片段>
+### Evidence Appendix (reproducible)
+<key commands and output excerpts>
 ```

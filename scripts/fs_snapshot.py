@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-install-security-audit 配套：文件系统快照对比工具
-用途：安装前拍快照，安装后对比，发现任何意外的文件增删改。
+install-security-audit companion: filesystem snapshot diff tool v2.1
+Purpose: snapshot before install, diff after install, surface any unexpected file changes.
 
-用法：
-    1) 安装前：python fs_snapshot.py <目标路径> snapshot_before.json
-    2) 执行安装
-    3) 安装后：python fs_snapshot.py <目标路径> snapshot_after.json
-    4) 对比  ：python fs_snapshot.py --diff snapshot_before.json snapshot_after.json
+Usage:
+    1) Before install: python fs_snapshot.py snapshot before.json <target-dir> [more dirs...]
+    2) Run the install
+    3) After install : python fs_snapshot.py snapshot after.json <target-dir> [more dirs...]
+    4) Diff          : python fs_snapshot.py diff before.json after.json
 
-默认同时监控一组敏感位置（可用 --敏感 关闭）。
+A set of sensitive locations is monitored by default (disable with --no-sensitive).
 """
 import sys
 import os
@@ -18,7 +18,7 @@ import hashlib
 import pathlib
 from datetime import datetime
 
-# 敏感监控位置（除目标目录外，额外监控）
+# Sensitive locations monitored in addition to the target directory
 SENSITIVE = [
     os.path.expanduser("~/.ssh"),
     os.path.expanduser("~/.aws"),
@@ -54,7 +54,7 @@ def snapshot(paths, max_files=20000):
             continue
         for p in b.rglob("*"):
             if count >= max_files:
-                result["_truncated"] = f"超过 {max_files} 文件，已截断"
+                result["_truncated"] = f"exceeded {max_files} files; truncated"
                 return result
             try:
                 if p.is_file():
@@ -79,65 +79,85 @@ def diff(before, after):
     return added, removed, changed
 
 
-def main():
-    args = [a for a in sys.argv[1:]]
-
-    if "--diff" in args:
-        i = args.index("--diff")
-        bf, af = args[i + 1], args[i + 2]
-        before = json.loads(pathlib.Path(bf).read_text(encoding="utf-8"))
-        after = json.loads(pathlib.Path(af).read_text(encoding="utf-8"))
-        added, removed, changed = diff(before.get("files", {}), after.get("files", {}))
-        print("=" * 72)
-        print(" 文件系统变化对比报告")
-        print("=" * 72)
-        print(f"快照前时间: {before.get('time')}")
-        print(f"快照后时间: {after.get('time')}")
-        print()
-        print(f"🟢 新增文件 ({len(added)}):")
-        for f in sorted(added)[:200]:
-            print(f"    + {f}")
-        if len(added) > 200:
-            print(f"    ... 还有 {len(added) - 200} 个")
-        print()
-        print(f"🔴 删除文件 ({len(removed)}):")
-        for f in sorted(removed)[:200]:
-            print(f"    - {f}")
-        print()
-        print(f"🟡 修改文件 ({len(changed)}):")
-        for f in sorted(changed)[:200]:
-            print(f"    ~ {f}")
-        print()
-        # 敏感位置检查
-        sens_hits = [f for f in list(added) + list(changed)
-                     if any(s.replace("\\", "/") in f.replace("\\", "/") for s in SENSITIVE)]
-        if sens_hits:
-            print("⚠️⚠️⚠️ 警告：敏感位置被改动！")
-            for f in sens_hits:
-                print(f"    !! {f}")
-        else:
-            print("✅ 未发现敏感位置（SSH/云凭据/shell配置）被改动")
-        return
-
-    # 拍摄快照
-    if len(args) < 2:
+def cmd_snapshot(args):
+    positional = [a for a in args if not a.startswith("--")]
+    if len(positional) < 2:
         print(__doc__)
         sys.exit(1)
-    target = args[0]
-    out = args[1]
-    paths = [target]
-    if "--敏感" not in args and "--no-sensitive" not in args:
+    out = positional[0]
+    targets = positional[1:]
+    paths = list(targets)
+    if "--no-sensitive" not in args:
         paths += SENSITIVE
     data = {
         "time": datetime.now().isoformat(),
-        "target": target,
+        "target": targets[0] if len(targets) == 1 else targets,
         "monitored": paths,
         "files": snapshot(paths),
     }
     pathlib.Path(out).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"快照已保存: {out}")
-    print(f"  监控路径数: {len(paths)}")
-    print(f"  记录文件数: {len(data['files'])}")
+    print(f"Snapshot saved: {out}")
+    print(f"  Monitored paths : {len(paths)}")
+    print(f"  Recorded files  : {len(data['files'])}")
+
+
+def cmd_diff(args):
+    positional = [a for a in args if not a.startswith("--")]
+    if len(positional) < 2:
+        print("Usage: python fs_snapshot.py diff <before.json> <after.json>")
+        sys.exit(1)
+    bf, af = positional[0], positional[1]
+    before = json.loads(pathlib.Path(bf).read_text(encoding="utf-8"))
+    after = json.loads(pathlib.Path(af).read_text(encoding="utf-8"))
+    added, removed, changed = diff(before.get("files", {}), after.get("files", {}))
+    print("=" * 72)
+    print(" Filesystem Change Diff Report")
+    print("=" * 72)
+    print(f"Before snapshot : {before.get('time')}")
+    print(f"After snapshot  : {after.get('time')}")
+    print()
+    print(f"[+] Added files ({len(added)}):")
+    for f in sorted(added)[:200]:
+        print(f"    + {f}")
+    if len(added) > 200:
+        print(f"    ... {len(added) - 200} more")
+    print()
+    print(f"[-] Removed files ({len(removed)}):")
+    for f in sorted(removed)[:200]:
+        print(f"    - {f}")
+    print()
+    print(f"[~] Modified files ({len(changed)}):")
+    for f in sorted(changed)[:200]:
+        print(f"    ~ {f}")
+    print()
+    # Sensitive-location check
+    norm = lambda s: s.replace("\\", "/").lower()
+    sens_hits = [f for f in list(added) + list(changed)
+                 if any(norm(s) in norm(f) for s in SENSITIVE)]
+    if sens_hits:
+        print("[!] WARNING: sensitive locations were modified!")
+        for f in sens_hits:
+            print(f"    !! {f}")
+    else:
+        print("[ok] No sensitive location (SSH / cloud credentials / shell config) was modified")
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__)
+        sys.exit(0 if args else 1)
+
+    cmd = args[0]
+    rest = args[1:]
+    if cmd == "snapshot":
+        cmd_snapshot(rest)
+    elif cmd == "diff":
+        cmd_diff(rest)
+    else:
+        print(f"Unknown subcommand: {cmd}")
+        print(__doc__)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
