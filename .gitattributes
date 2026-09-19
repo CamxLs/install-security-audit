@@ -1,11 +1,11 @@
-# 统一换行符：仓库内一律 LF，避免跨平台 diff 噪声
+# Normalize line endings: always LF inside the repo, to avoid cross-platform diff noise
 * text=auto eol=lf
 
-*.py  text eol=lf
-*.md  text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
 *.json text eol=lf
 
-# 二进制
+# Binaries
 *.png binary
 *.jpg binary
 *.exe binary
