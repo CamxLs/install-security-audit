@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+
+# 审计运行产物（基线文件、对比报告）
+audit_baseline*.json
+*.baseline.json
+*_before.json
+*_after.json
+
+# 审计台账（私有数据，不随仓库分发）
+*.jsonl
+!requirements*.jsonl
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
