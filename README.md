@@ -1,8 +1,11 @@
 # install-security-audit
 
-**A pre-install security audit workflow — mandatory supply-chain due diligence for AI agents and humans.**
+**Check a package, repo, or agent skill before it touches your machine.**
 
-Look a third-party project over thoroughly *before* it lands on your machine.
+Ten stages: static scanning, dependency verification, permission and data-flow review, persistence
+diffs. Four Python scripts, no dependencies, one written report at the end.
+
+You make the install call. The agent doesn't make it for you.
 
 [![Release](https://img.shields.io/github/v/release/CamxLs/install-security-audit?label=release&color=red)](https://github.com/CamxLs/install-security-audit/releases)
 [![License](https://img.shields.io/github/license/CamxLs/install-security-audit?color=blue)](LICENSE)
@@ -50,13 +53,41 @@ It works both as an operational spec for AI agents (`SKILL.md`) and as a methodo
  4. Supply-chain verification  Full dependency tree, typosquatting, CVEs, checksums
  5. Permissions & data flow    What data is read, where it is sent, least-privilege options
  6. Behavioral validation      Isolated run (fs/net/process/persistence) or mandatory escalation
- 7. Binary trustworthiness     Hash / origin / signature / VirusTotal / local scan
+ 7. Binary trustworthiness     Hash / origin / Authenticode / prebuilt-artifact cross-check
  8. Registry & persistence     Run keys / startup folders / services / scheduled tasks diff
  9. Risk assessment            Low / Medium (P1) / High (P0) + one of four verdicts
 10. Audit ledger               Append to JSONL; query and aggregate across runs
 ```
 
+Two sub-stages sit inside stage 7, because release artifacts and mirrors are where source-level
+cleanliness stops meaning anything:
+
+- **7.1 Prebuilt-binary audit** — signature status, version metadata, embedded domain and IP
+  cross-check, and (for PyInstaller bundles) unpacking the archive to compare internal identifiers
+  against the audited source
+- **7.2 Mirror and distribution-channel check** — official domain vs re-upload, look-alike
+  organizations, verification status
+
 **Four verdicts**: ✅ Install ｜ ⚠️ Install with conditions ｜ 🧪 Install isolated ｜ ❌ Do not install
+
+---
+
+## What's New in v2.4
+
+One audit drove most of this release: a documentation-only repository whose real payload turned out to
+be an unsigned prebuilt binary in a sibling repo, and whose "runs locally, data never leaves your
+device" headline didn't hold on anything except Apple Silicon. Every addition below comes from a gap
+that audit walked into.
+
+| Addition | Why it exists now |
+|---|---|
+| **Stage 7.1** prebuilt-binary audit | A clean source tree tells you nothing about the `.zip` users actually download. Covers signature status, version metadata, and unpacking a PyInstaller bundle to cross-check its internal identifiers against the source |
+| **Stage 7.2** mirror and channel check | Re-uploads and look-alike organizations defeat "it's from the official repo" |
+| **Documentation-only repositories** | A repo with 42 files and zero lines of code still ships a payload — it is in whatever the README tells you to install. The real audit target is somewhere else |
+| **"Local privacy" that cannot be delivered** | When the source confines local inference to one platform, the promise dies on every other platform. Report this as a top-level conclusion, not a footnote |
+| **The README as an attack surface** | Zero-width characters, bidirectional overrides, HTML comments, and prompt-injection strings — invisible to a human, visible to the model reading it |
+| **Image trailing-payload detection** | In a docs repo, images are the only place a payload can hide. Bytes after a PNG's `IEND` chunk or a JPEG's EOI marker don't belong there |
+| **Environment notes** | Working shell, PowerShell, and platform caveats, so a failed check isn't mistaken for a clean one |
 
 ---
 
@@ -163,6 +194,15 @@ On macOS/Linux the same stages apply — substitute the equivalents:
 
 Contributions extending the scripts to other platforms are welcome.
 
+**Shell note.** Some Windows environments ship a bash shim without the usual coreutils. If `ls`,
+`head`, `mkdir`, `wc` or `find` report `command not found`, prepend the Git for Windows utilities
+directory to `PATH`. Invoke `find` by absolute path — otherwise it resolves to the Windows
+`FIND.EXE`, which has different semantics and will error out.
+
+**PowerShell note.** In restricted environments `Add-Type` may be blocked, since it compiles and loads
+.NET code at runtime; use `Expand-Archive` and other built-in cmdlets instead. If stdout is empty
+despite an exit code of 0, write results with `Out-File` and read the file back.
+
 ---
 
 ## Disclaimer
@@ -177,9 +217,8 @@ This tool provides **audit assistance**, not a security guarantee.
 
 ## Version
 
-Current release: **v2.2.0** (first public release).
-
-See [Releases](https://github.com/CamxLs/install-security-audit/releases) for the changelog.
+Current release: **v2.4.0**. See [Releases](https://github.com/CamxLs/install-security-audit/releases)
+for the changelog.
 
 ## License
 

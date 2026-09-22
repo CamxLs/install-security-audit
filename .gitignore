@@ -10,11 +10,13 @@ dist/
 .venv/
 venv/
 
-# Audit run artifacts (baseline files, diff reports)
+# Audit run artifacts (baseline files, diff reports, snapshots)
 audit_baseline*.json
 *.baseline.json
 *_before.json
 *_after.json
+registry_snapshot.json
+fs_snapshot*.json
 
 # Audit ledger (private data; not distributed with the repository)
 *.jsonl
